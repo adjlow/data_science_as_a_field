@@ -1,0 +1,218 @@
+---
+title: "Shooting Project Dataset"
+date: "2023-06-12"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(knitr)
+```
+### Data Information:
+The data set used for this project is the NYPD shooting data
+Data from 2006 - 2022 about the reported shootings differentiated by borough
+Source: https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD
+## The question I will ask in this report is: how does borough play a role in total shootings and shooting rates among the highest ranking areas. And how does the total compare to the rate?
+
+## Import Data
+```{r}
+nypd_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+Summarize the data
+
+```{r, include = FALSE}
+summary(nypd_data)
+```
+
+## Tidy the Data
+Clean up column names and turn date into date object type
+```{r}
+nypd_data_clean <- nypd_data %>%
+  rename(Date = OCCUR_DATE,
+         Time = OCCUR_TIME) %>%
+  mutate(Date = mdy(Date))
+```
+Check Date object type
+```{r}
+class(nypd_data_clean$Date)
+```
+
+Check that all the Boros listed are valid:
+```{r}
+unique(nypd_data_clean$BORO)
+```
+
+Now get rid of some of the unnecessary columns
+```{r}
+nypd_shortened <- select(nypd_data_clean, -c(INCIDENT_KEY, LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC, X_COORD_CD, Y_COORD_CD, Lon_Lat))
+```
+Check the data for issues
+```{r}
+summary(nypd_shortened)
+```
+
+## Visualize Data
+Group data by boro
+```{r}
+nypd_by_boro <- nypd_shortened %>%
+     group_by(BORO) %>%
+     summarize(total = n())
+```
+
+Look at total shootings by boro as a barplot 
+```{r barplot}
+ggplot(nypd_by_boro, aes(x=BORO, y=total))+ 
+     geom_bar(stat = "identity")
+```
+
+### Brooklyn clearly has the most and Staten Island has the least overall, but it would be more informative to look at the data over time instead of as a single total.
+What does it look like if we do boro by day?
+  First aggregate the data
+```{r}
+nypd_by_boro_day <- nypd_shortened %>%
+     group_by(BORO, Date) %>%
+     summarize(total = n())
+```
+
+Then, graph the data
+```{r line graph} 
+nypd_by_boro_day %>%
+  filter(total > 0) %>%
+  ggplot(aes(x = Date, y = total)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) 
+```
+
+### This info isn't super helpful either, so what if we group up to the year?
+First Aggregate the data
+```{r}
+nypd_boro_year <- nypd_shortened %>%
+  mutate(Year = year(Date))
+```
+```{r}
+nypd_boro_year <- nypd_boro_year %>%
+  group_by(BORO, Year) %>%
+  summarize(total =n())
+```
+Then, graph the data
+```{r}
+nypd_boro_year %>%
+  filter(total > 0) %>%
+  ggplot(aes(x = Year, y = total)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) 
+```
+
+## Analysis
+From the plot of all boros above it is clear that Staten Island has the smallest amount of crime as well as the lowest amount of fluctuation. Brooklyn appears to always have the highest level of crime other than in 2021, when The Bronx exceeded it. The Bronx and Brooklyn also seem to have the most fluctuation. Let's look at just Brookyn and the Bronx over the last 5 years.
+
+First, narrow down to only the two boros and last 5 years
+```{r}
+nypd_filter <- nypd_boro_year %>%
+    filter(BORO == "BRONX"| BORO == "BROOKLYN", Year >= 2018) %>%
+    group_by(BORO, Year) %>%
+    summarize(total = sum(total))
+```
+Then, graph it
+```{r}
+nypd_filter %>%
+  filter(total > 0) %>%
+  ggplot(aes(x = Year, y = total)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) 
+```
+
+### This makes it easier to compare the two boros, but it still doesn't tell us much. So let's introduce a population variable to see if it plays any role (population data from United States Census Bureau and citypopulation.de)
+
+```{r}
+nypd_population <- nypd_filter %>%
+ mutate(Population = case_when(
+    BORO == "BROOKLYN" & Year == 2018 ~ 2601000,
+    BORO == "BROOKLYN" & Year == 2019 ~ 2590000,
+    BORO == "BROOKLYN" & Year == 2020 ~ 2577000,
+    BORO == "BROOKLYN" & Year == 2021 ~ 2641000,
+    BORO == "BROOKLYN" & Year == 2022 ~ 2590516,
+    BORO == "BRONX" & Year == 2018 ~ 1438000,
+    BORO == "BRONX" & Year == 2019 ~ 1435000,
+    BORO == "BRONX" & Year == 2020 ~ 1427000,
+    BORO == "BRONX" & Year == 2021 ~ 1424948,
+    BORO == "BRONX" & Year == 2022 ~ 1379946,
+    TRUE ~ NA_real_
+  ))
+```
+
+Now let's add a column for shooting rate by population (per 100000 people)
+```{r}
+nypd_shooting_rate <- nypd_population %>%
+  mutate(shooting_rate = total / (Population / 100000))
+```
+Summarize the data:
+```{r}
+summary(nypd_shooting_rate)
+```
+
+Plot shooting rate over the years
+```{r, plot}
+nypd_shooting_rate %>%
+  ggplot(aes(x = Year, y = shooting_rate)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) 
+```
+Analysis: So now you can see that although the total number of shootings are higher in Brooklyn, with the exception of 2021, the actual shooting rate is higher in the Bronx. 
+
+## Model: linear regression
+First let's do a combined linear regression model to see how Brooklyn and Bronx compare to them combined
+```{r}
+nypd_shooting_rate %>%
+    ggplot(aes(x = Year, y = shooting_rate)) +
+    geom_line(aes(color = BORO)) +
+    geom_point(aes(color = BORO)) +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, linetype = "dotted", color = "black")+
+    ggtitle("Shooting Rate by Boro Combined Model") +
+    xlab("Year") +
+    ylab("Shooting Rate (per 100,000)") 
+```
+
+By looking at this visualization it becomes clear that the Bronx shooting rate is significantly above the model and for 2020-2021 it is even outside of the standard error. Meanwhile, Brooklyn typically falls below the combined linear regression model, with the exception of 2020. 
+
+### Now lets add linear regression models for the individual boros.
+```{r}
+nypd_shooting_rate %>%
+    ggplot(aes(x = Year, y = shooting_rate)) +
+    geom_line(aes(color = BORO)) +
+    geom_point(aes(color = BORO)) +
+    geom_smooth(method = "lm", formula = y ~ x, se = TRUE, linetype = "dashed", color = "black") +
+    geom_smooth(method = "lm", formula = y ~ x, data = subset(nypd_shooting_rate, BORO == "BROOKLYN"), se = FALSE, linetype = "dotted", color = "blue") +
+    geom_smooth(method = "lm", formula = y ~ x, data = subset(nypd_shooting_rate, BORO == "BRONX"), se = FALSE, linetype = "dotted", color = "red") +
+  ggtitle("Shooting Rate by Boro Model") +
+  xlab("Year") +
+  ylab("Shooting Rate (per 100,000)") 
+```
+
+This visualization highlights the differences in the linear regression models for the two different boroughss. They both increase over time, but the Bronx increases at a steeper rate. This is likely due to the large increase in shootings from 2019-2021 while the population did not change that drastically. Brooklyn also sees and increase within the linear model and the shooting rate, however it consistently stays below the combined model
+
+
+### Conclusion:
+I can conclude that overall, the highest number of shootings is in Brooklyn, followed by the Bronx. However, it is important to note that the *rate* of shootings in the Bronx for the past five years was higher than it was in Brooklyn. The Bronx and Brooklyn had more similar shooting rates in 2018, 2019, and 2020, and then the difference increased greatly. This can be seen by looking at their individual linear regression models. The least number of shootings, by far, occur in Staten Island. The relationship shown in the model is not statistically significant, however, the p-value is > 0.05. Therefore, I would ask further questions in a later analysis.
+
+### What questions would I ask in the future?
+* How did COVID effect the 2021 numbers?
+* Why are there very rarely peaks for BRONX and BROOKLYN during the same day?
+* What played a factor in 2021 being the highest year for the Bronx while Brooklyn drastically decreased.
+* How do rates for ALL boroughs compare?
+
+### Biases:
+* How was this data collected? Were all shootings reported timely and accurately?
+* Furthermore is it possible that some shootings never were reported? I would be curious to do more research on if any biases exist
+* My own bias- I decided to look at the trend in Brooklyn vs the Bronx because they were outliers on the higher end. It would have been interesting to analyze all boros, not just outliers. 
+
+```{r, include = FALSE}
+sessionInfo()
+```
